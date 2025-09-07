@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>MAPAKITA — Street View</title>
+  <style>
+    html, body { height:100%; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+    .topbar{ position:fixed; top:0; left:0; right:0; height:48px; display:flex; align-items:center; gap:12px; padding:0 12px; background:#0b66ff; color:#fff; z-index:10 }
+    .topbar h1{ font-size:16px; margin:0; font-weight:800; letter-spacing:.02em }
+    .wrap{ position:absolute; top:48px; bottom:0; left:0; right:0; display:grid; grid-template-columns: 50% 50%; }
+    #map { width:100%; height:100%; }
+    #pano{ width:100%; height:100%; }
+    .panel{ position:fixed; right:12px; top:60px; width:360px; max-width:92vw; background:#fff; border-radius:12px; box-shadow: 0 10px 30px rgba(0,0,0,.12); padding:12px; z-index:11; }
+    .panel h2{ margin:0 0 6px 0; font-size:16px }
+    .panel .muted{ color:#6b7280; font-size:12px }
+    .photos{ display:grid; grid-template-columns: repeat(3, 1fr); gap:6px; margin-top:8px }
+    .photos img{ width:100%; height:80px; object-fit:cover; border-radius:8px; border:1px solid #eee }
+    .chip{ display:inline-block; padding:4px 8px; background:#eef4ff; color:#0b66ff; border-radius:999px; font-weight:600; font-size:12px }
+    .link{ color:#0b66ff; text-decoration:none; font-weight:600 }
+    .notice{ position:fixed; bottom:12px; left:12px; background:#111827; color:#fff; padding:8px 12px; border-radius:10px; font-size:12px; opacity:.85 }
+    .searchbar{ margin-left:auto }
+    .searchbar input{ width:260px; padding:8px; border-radius:8px; border:0; }
+    @media (max-width: 960px){
+      .wrap{ grid-template-columns: 100%; grid-template-rows: 50% 50%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>MAPAKITA — Street View</h1>
+    <div class="searchbar">
+      <input id="q" placeholder="Search title / agency / ID" oninput="applyFilters()"/>
+    </div>
+  </div>
+  <div class="wrap">
+    <div id="map"></div>
+    <div id="pano"></div>
+  </div>
+  <div class="panel" id="info" style="display:none"></div>
+  <div class="notice" id="apiNotice" style="display:none">Add your Google Maps API key in the script URL (<code>YOUR_GOOGLE_MAPS_API_KEY</code>) then reload.</div>
+
+  <script>
+  let map, panorama, markers=[], allFeatures=null, svService;
+  const fallbackCenter = {{lat:14.9545, lng:120.8969}}; // Baliwag
+
+  function init(){
+    const hasKey = location.search.includes('key=') || document.currentScript.src.includes('key=');
+    document.getElementById('apiNotice').style.display = document.currentScript.src.includes('YOUR_GOOGLE_MAPS_API_KEY') ? 'block' : 'none';
+
+    map = new google.maps.Map(document.getElementById('map'), {center:fallbackCenter, zoom:13, mapTypeControl:false});
+    panorama = new google.maps.StreetViewPanorama(document.getElementById('pano'), {position:fallbackCenter, pov:{heading:0,pitch:0}, zoom:1, visible:true});
+    map.setStreetView(panorama);
+    svService = new google.maps.StreetViewService();
+    loadData();
+  }
+
+  async function loadData(){
+    const res = await fetch('data/projects.geojson');
+    const gj = await res.json();
+    // normalize
+    allFeatures = gj.features.map(f=>{
+      const p = f.properties||{};
+      const id = f.id || p.id;
+      let coords = null;
+      if(f.geometry && f.geometry.type==='Point' && f.geometry.coordinates){
+        coords = {lng: f.geometry.coordinates[0], lat: f.geometry.coordinates[1]};
+      }
+      const photos = Array.isArray(p.photos) ? p.photos : (p.image_url ? [p.image_url] : []);
+      return {{ id, coords, p, f }};
+    });
+    renderMarkers();
+  }
+
+  function renderMarkers(){
+    markers.forEach(m=>m.setMap(null)); markers=[];
+    const q = document.getElementById('q').value.trim().toLowerCase();
+    const filtered = allFeatures.filter(({id,p})=>{
+      if(!q) return true;
+      const hay = (id+' '+(p.title||'')+' '+(p.agency||'')).toLowerCase();
+      return hay.includes(q);
+    });
+    const bounds = new google.maps.LatLngBounds();
+    filtered.forEach(({id,coords,p,f})=>{
+      if(!coords) return;
+      const marker = new google.maps.Marker({position:coords, map, title:p.title||id});
+      marker.addListener('click', ()=>focusFeature({id,coords,p,f}));
+      markers.push(marker); bounds.extend(coords);
+    });
+    if(!bounds.isEmpty()) map.fitBounds(bounds);
+  }
+
+  function applyFilters(){ renderMarkers(); }
+
+  function focusFeature({id,coords,p,f}){
+    map.panTo(coords);
+    // Try to find nearest Street View pano
+    svService.getPanorama({location:coords, radius:80}, (data, status)=>{
+      if(status==='OK'){
+        panorama.setPosition(data.location.latLng);
+        if(data.links && data.links[0]) panorama.setPov({heading:data.links[0].heading, pitch:0});
+      }else{
+        panorama.setPosition(coords);
+      }
+    });
+    showInfo({id,coords,p,f});
+  }
+
+  function peso(n){
+    if(n==null || n==='') return '—';
+    const x = Number(n); if(!isFinite(x)) return String(n);
+    return '₱'+x.toLocaleString();
+  }
+
+  function showInfo({id,coords,p,f}){
+    const div = document.getElementById('info');
+    const photos = Array.isArray(p.photos) ? p.photos : (p.image_url ? [p.image_url] : []);
+    div.innerHTML = `
+      <h2>${p.title||id}</h2>
+      <div class="muted">${p.agency||''}</div>
+      <div style="margin:6px 0">
+        <span class="chip">${p.status||'Status: —'}</span>
+        ${p.barangay?` <span class="chip">${p.barangay}</span>`:''}
+      </div>
+      <div><b>ABC:</b> ${peso(p.abc_php)}</div>
+      ${p.source_url?`<div style="margin-top:6px"><a class="link" href="${p.source_url}" target="_blank">Source</a></div>`:''}
+      ${photos.length?`<div class="photos">${photos.map(u=>`<a href="${u}" target="_blank"><img src="${u}" alt="photo"/></a>`).join('')}</div>`:''}
+    `;
+    div.style.display = 'block';
+  }
+  </script>
+  <script async defer src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&callback=init"></script>
+</body>
+</html>
