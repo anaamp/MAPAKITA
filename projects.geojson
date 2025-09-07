@@ -1,0 +1,25 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "DEMO-1",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          120.8969,
+          14.9545
+        ]
+      },
+      "properties": {
+        "title": "Demo Project",
+        "agency": "City of Baliwag",
+        "status": "ITB",
+        "abc_php": 1000000,
+        "barangay": "Poblacion",
+        "source_url": "",
+        "image_url": ""
+      }
+    }
+  ]
+}
